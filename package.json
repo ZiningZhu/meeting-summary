@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-sample-plugin",
+	"name": "obsidian-meeting-summary",
 	"version": "1.0.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"description": "Record, transcribe with diarisation, and summarise meetings in Obsidian.",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {

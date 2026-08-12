@@ -1,8 +1,28 @@
-/*
+/* Meeting summary plugin styles. */
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.meeting-summary-recording {
+	color: var(--text-error);
+}
 
-If your plugin does not need CSS, delete this file.
+.status-bar-item.meeting-summary-recording {
+	font-variant-numeric: tabular-nums;
+}
 
-*/
+.meeting-summary-prompt-input {
+	width: 100%;
+	min-height: 12em;
+	font-family: var(--font-monospace);
+	resize: vertical;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.status-bar-item.meeting-summary-recording {
+		animation: meeting-summary-pulse 2s ease-in-out infinite;
+	}
+}
+
+@keyframes meeting-summary-pulse {
+	50% {
+		opacity: 0.55;
+	}
+}

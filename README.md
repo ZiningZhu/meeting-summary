@@ -1,92 +1,79 @@
-# Obsidian Sample Plugin
+# Meeting Summary
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+Record a meeting from Obsidian, transcribe it with speaker diarisation into a timestamped note, and summarise it with Claude.
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+## What it does
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
+1. **Record** — capture the meeting from your microphone. A status bar timer shows elapsed time while recording.
+2. **Transcribe** — the audio is sent to your configured speech-to-text provider, which returns a speaker-labelled transcript.
+3. **Write** — a new note is created at `Meetings/Meeting YYYY-MM-DD HH-MM-SS.md` with frontmatter (duration, provider, speakers, language), an optional link to the saved audio, and a `## Transcript` section.
+4. **Summarise** — Claude writes a `## Summary` section above the transcript. Runs automatically after transcription, or on demand for any note.
 
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open modal (simple)" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and outputs a Notice on click.
-- Registers a global interval which logs 'setInterval' to the console.
+## Commands
 
-## First time developing plugins?
+| Command | Notes |
+| --- | --- |
+| Start or stop meeting recording | Also bound to the microphone ribbon icon |
+| Start meeting recording | Only available when idle |
+| Stop recording and transcribe | Only available while recording |
+| Discard current recording | Throws away the audio without transcribing |
+| Summarise meeting transcript in this note | Works on any note; re-running replaces the existing summary |
 
-Quick starting guide for new plugin devs:
+## Setup
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `src/main.ts` to `main.js`.
-- Make changes to `src/main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+Open **Settings → Community plugins → Meeting Summary**.
 
-## Releasing new releases
+### Transcription
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+Claude has no speech-to-text endpoint, so transcription uses a dedicated provider:
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+- **Deepgram** (default) — performs acoustic diarisation server-side and returns one utterance per speaker turn. This gives the most reliable speaker labels. Needs a Deepgram API key.
+- **Whisper-compatible** — any endpoint exposing `POST /audio/transcriptions` (OpenAI, or a self-hosted server if you would rather audio did not leave your machine). These return no speaker labels; with **Attribute speakers with Claude** enabled, Claude infers turns from the transcript afterwards. That is a best-effort guess and is noticeably weaker than acoustic diarisation.
 
-## Adding your plugin to the community plugin list
+Set **Speaker names** to a comma-separated list to replace `Speaker 1`, `Speaker 2`, … with real names, in order of first speaking turn.
 
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
+### Summarisation
 
-## How to use
+Needs an Anthropic API key. The model defaults to `claude-opus-5`; **Effort** trades cost against thoroughness. **Summary instructions** is the prompt sent ahead of the transcript — edit it to change the sections produced.
 
-- Clone this repo.
-- Make sure your NodeJS is at least v18 (`node --version`).
-- `npm i` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
+## Privacy
 
-## Manually installing the plugin
+This plugin makes network requests you should be aware of:
 
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
+- Recorded audio goes to the transcription provider you configure.
+- Transcript text goes to Anthropic for summarisation, and again for speaker attribution when that option is enabled.
+- API keys are stored in the plugin's `data.json` inside your vault, in plain text.
 
-## Improve code quality with eslint
+Nothing is sent anywhere until you start a recording or run a summary. **Do not record a meeting without the consent of everyone in it** — that is your responsibility, and in many jurisdictions a legal requirement.
 
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code.
-- This project already has eslint preconfigured, you can invoke a check by running`npm run lint`
-- Together with a custom eslint [plugin](https://github.com/obsidianmd/eslint-plugin) for Obsidan specific code guidelines.
-- A GitHub action is preconfigured to automatically lint every commit on all branches.
+## Limitations
 
-## Funding URL
+- Recording uses the `MediaRecorder` API and captures **microphone input only**. It does not capture system audio, so remote participants are only recorded if they come through your room's speakers. For calls, route the meeting audio into a virtual input device (BlackHole, Loopback, VB-Cable) and select it as your system microphone.
+- Mobile support depends on the platform granting microphone access to Obsidian's webview; the plugin reports a clear error where it is unavailable.
+- Very long meetings are transcribed in one request. Provider file-size and duration limits apply.
 
-You can include funding URLs where people who use your plugin can financially support it.
+## Development
 
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
-
-```json
-{
-	"fundingUrl": "https://buymeacoffee.com"
-}
+```bash
+npm install
+npm run dev     # watch build
+npm run build   # type-check and production build
+npm run lint
 ```
 
-If you have multiple URLs, you can also do:
+To test in a vault, copy `main.js`, `manifest.json`, and `styles.css` into `<Vault>/.obsidian/plugins/meeting-summary/`, then enable the plugin under **Settings → Community plugins**. For live reloading, develop directly in that folder — the plugin id (`meeting-summary`) should match the folder name.
 
-```json
-{
-	"fundingUrl": {
-		"Buy Me a Coffee": "https://buymeacoffee.com",
-		"GitHub Sponsor": "https://github.com/sponsors",
-		"Patreon": "https://www.patreon.com/"
-	}
-}
+### Layout
+
 ```
-
-## API Documentation
-
-See https://docs.obsidian.md
+src/
+  main.ts                  plugin lifecycle
+  settings.ts              settings interface, defaults, settings tab
+  types.ts                 shared transcript shapes
+  audio/recorder.ts        MediaRecorder wrapper
+  transcription/           provider dispatch, Deepgram, Whisper-compatible
+  llm/                     Anthropic client, summarisation, speaker attribution
+  notes/                   note creation and markdown section editing
+  commands/                command registration, recording pipeline, summarise
+  utils/                   formatting, multipart encoding
+```
