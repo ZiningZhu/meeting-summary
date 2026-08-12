@@ -1,7 +1,8 @@
 import { App, PluginSettingTab, Setting } from 'obsidian';
 import type MeetingSummaryPlugin from './main';
 
-export type TranscriptionProviderId = 'deepgram' | 'whisper';
+export const TRANSCRIPTION_PROVIDER_IDS = ['deepinfra', 'whisper'] as const;
+export type TranscriptionProviderId = (typeof TRANSCRIPTION_PROVIDER_IDS)[number];
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export const DEFAULT_SUMMARY_PROMPT = `Summarise the meeting transcript below in Markdown. Use only these sections, and omit any section that has no content:
@@ -33,12 +34,12 @@ export interface MeetingSummarySettings {
 
 	// Transcription.
 	transcriptionProvider: TranscriptionProviderId;
-	deepgramApiKey: string;
-	deepgramModel: string;
+	deepinfraApiKey: string;
+	deepinfraModel: string;
 	whisperApiKey: string;
 	whisperBaseUrl: string;
 	whisperModel: string;
-	/** Ask Claude to attribute speakers when the provider returns none. */
+	/** Ask Claude to attribute speakers, since no provider here diarises. */
 	llmDiarisation: boolean;
 	/** Comma-separated real names, in order of first appearance. */
 	speakerNames: string;
@@ -57,9 +58,9 @@ export const DEFAULT_SETTINGS: MeetingSummarySettings = {
 	effort: 'high',
 	summaryPrompt: DEFAULT_SUMMARY_PROMPT,
 
-	transcriptionProvider: 'deepgram',
-	deepgramApiKey: '',
-	deepgramModel: 'nova-3',
+	transcriptionProvider: 'deepinfra',
+	deepinfraApiKey: '',
+	deepinfraModel: 'Qwen/Qwen3-ASR-1.7B',
 	whisperApiKey: '',
 	whisperBaseUrl: 'https://api.openai.com/v1',
 	whisperModel: 'whisper-1',
@@ -90,11 +91,11 @@ export class MeetingSummarySettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName('Provider')
 			.setDesc(
-				'Deepgram labels speakers itself. A Whisper-compatible endpoint does not, so speakers are attributed by Claude afterwards.',
+				'Neither provider labels speakers, so speaker turns are attributed by Claude afterwards.',
 			)
 			.addDropdown((dropdown) =>
 				dropdown
-					.addOption('deepgram', 'Deepgram')
+					.addOption('deepinfra', 'DeepInfra')
 					.addOption('whisper', 'Whisper-compatible')
 					.setValue(this.plugin.settings.transcriptionProvider)
 					.onChange(async (value) => {
@@ -105,29 +106,33 @@ export class MeetingSummarySettingTab extends PluginSettingTab {
 					}),
 			);
 
-		if (this.plugin.settings.transcriptionProvider === 'deepgram') {
+		if (this.plugin.settings.transcriptionProvider === 'deepinfra') {
 			new Setting(containerEl)
-				.setName('Deepgram API key')
-				.setDesc('Sent to api.deepgram.com with each recording.')
+				.setName('DeepInfra API key')
+				.setDesc('Sent to api.deepinfra.com with each recording.')
 				.addText((text) =>
 					text
-						.setPlaceholder('Enter your Deepgram API key')
-						.setValue(this.plugin.settings.deepgramApiKey)
+						.setPlaceholder('Enter your DeepInfra API key')
+						.setValue(this.plugin.settings.deepinfraApiKey)
 						.onChange(async (value) => {
-							this.plugin.settings.deepgramApiKey = value.trim();
+							this.plugin.settings.deepinfraApiKey = value.trim();
 							await this.plugin.saveSettings();
 						}),
 				);
 
 			new Setting(containerEl)
-				.setName('Deepgram model')
+				.setName('DeepInfra model')
+				.setDesc(
+					'Any speech-to-text model on DeepInfra, given as owner/name. Must return Whisper-style segments.',
+				)
 				.addText((text) =>
 					text
-						.setPlaceholder('nova-3')
-						.setValue(this.plugin.settings.deepgramModel)
+						.setPlaceholder('Qwen/Qwen3-ASR-1.7B')
+						.setValue(this.plugin.settings.deepinfraModel)
 						.onChange(async (value) => {
-							this.plugin.settings.deepgramModel =
-								value.trim() || DEFAULT_SETTINGS.deepgramModel;
+							this.plugin.settings.deepinfraModel =
+								value.trim().replace(/^\/+|\/+$/g, '') ||
+								DEFAULT_SETTINGS.deepinfraModel;
 							await this.plugin.saveSettings();
 						}),
 				);
@@ -174,21 +179,21 @@ export class MeetingSummarySettingTab extends PluginSettingTab {
 							await this.plugin.saveSettings();
 						}),
 				);
-
-			new Setting(containerEl)
-				.setName('Attribute speakers with Claude')
-				.setDesc(
-					'Infers speaker turns from the transcript. Less reliable than acoustic diarisation, and sends the transcript to Anthropic.',
-				)
-				.addToggle((toggle) =>
-					toggle
-						.setValue(this.plugin.settings.llmDiarisation)
-						.onChange(async (value) => {
-							this.plugin.settings.llmDiarisation = value;
-							await this.plugin.saveSettings();
-						}),
-				);
 		}
+
+		new Setting(containerEl)
+			.setName('Attribute speakers with Claude')
+			.setDesc(
+				'Infers speaker turns from the transcript. Less reliable than acoustic diarisation, and sends the transcript to Anthropic.',
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.llmDiarisation)
+					.onChange(async (value) => {
+						this.plugin.settings.llmDiarisation = value;
+						await this.plugin.saveSettings();
+					}),
+			);
 
 		new Setting(containerEl)
 			.setName('Speaker names')

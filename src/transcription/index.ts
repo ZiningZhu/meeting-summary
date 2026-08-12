@@ -2,7 +2,7 @@ import { diariseWithClaude } from '../llm/diarise';
 import { MeetingSummarySettings } from '../settings';
 import { TranscriptionResult } from '../types';
 import { applySpeakerNames, parseSpeakerNames } from '../utils/format';
-import { transcribeWithDeepgram } from './deepgram';
+import { transcribeWithDeepInfra } from './deepinfra';
 import { transcribeWithWhisper } from './whisper';
 
 export interface TranscribeRequest {
@@ -24,8 +24,8 @@ export async function transcribe(
 
 	onProgress?.('Transcribing audio…');
 	let result =
-		settings.transcriptionProvider === 'deepgram'
-			? await transcribeWithDeepgram(settings, audio, mimeType)
+		settings.transcriptionProvider === 'deepinfra'
+			? await transcribeWithDeepInfra(settings, audio, mimeType, fileName)
 			: await transcribeWithWhisper(settings, audio, mimeType, fileName);
 
 	if (!result.diarised && settings.llmDiarisation && settings.anthropicApiKey) {

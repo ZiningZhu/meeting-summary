@@ -5,7 +5,7 @@ Record a meeting from Obsidian, transcribe it with speaker diarisation into a ti
 ## What it does
 
 1. **Record** — capture the meeting from your microphone. A status bar timer shows elapsed time while recording.
-2. **Transcribe** — the audio is sent to your configured speech-to-text provider, which returns a speaker-labelled transcript.
+2. **Transcribe** — the audio is sent to your configured speech-to-text provider, which returns a timestamped transcript. Claude then attributes the turns to speakers, when enabled.
 3. **Write** — a new note is created at `Meetings/Meeting YYYY-MM-DD HH-MM-SS.md` with frontmatter (duration, provider, speakers, language), an optional link to the saved audio, and a `## Transcript` section.
 4. **Summarise** — Claude writes a `## Summary` section above the transcript. Runs automatically after transcription, or on demand for any note.
 
@@ -27,8 +27,10 @@ Open **Settings → Community plugins → Meeting Summary**.
 
 Claude has no speech-to-text endpoint, so transcription uses a dedicated provider:
 
-- **Deepgram** (default) — performs acoustic diarisation server-side and returns one utterance per speaker turn. This gives the most reliable speaker labels. Needs a Deepgram API key.
-- **Whisper-compatible** — any endpoint exposing `POST /audio/transcriptions` (OpenAI, or a self-hosted server if you would rather audio did not leave your machine). These return no speaker labels; with **Attribute speakers with Claude** enabled, Claude infers turns from the transcript afterwards. That is a best-effort guess and is noticeably weaker than acoustic diarisation.
+- **DeepInfra** (default) — [Qwen3-ASR-1.7B](https://deepinfra.com/Qwen/Qwen3-ASR-1.7B) on DeepInfra's inference API, at roughly $0.00045 per audio minute. Needs a DeepInfra API key. Set **DeepInfra model** to any other speech-to-text model on the platform (given as `owner/name`) as long as it returns Whisper-style `segments`.
+- **Whisper-compatible** — any endpoint exposing `POST /audio/transcriptions` (OpenAI, or a self-hosted server if you would rather audio did not leave your machine).
+
+Neither provider returns speaker labels. With **Attribute speakers with Claude** enabled, Claude infers turns from the transcript after transcription. That is a best-effort guess: it reads the wording and flow, not the voices, so it is noticeably weaker than acoustic diarisation and will make mistakes on fast exchanges. Turn it off and the whole transcript is attributed to `Speaker 1`.
 
 Set **Speaker names** to a comma-separated list to replace `Speaker 1`, `Speaker 2`, … with real names, in order of first speaking turn.
 
@@ -71,7 +73,7 @@ src/
   settings.ts              settings interface, defaults, settings tab
   types.ts                 shared transcript shapes
   audio/recorder.ts        MediaRecorder wrapper
-  transcription/           provider dispatch, Deepgram, Whisper-compatible
+  transcription/           provider dispatch, DeepInfra, Whisper-compatible
   llm/                     Anthropic client, summarisation, speaker attribution
   notes/                   note creation and markdown section editing
   commands/                command registration, recording pipeline, summarise
