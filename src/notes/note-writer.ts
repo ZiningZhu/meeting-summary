@@ -4,6 +4,7 @@ import { MeetingSummarySettings } from '../settings';
 import { TranscriptionResult } from '../types';
 import {
 	formatDuration,
+	formatTimestamp,
 	localIsoString,
 	sanitizeFileName,
 	segmentsToMarkdown,
@@ -74,6 +75,24 @@ function buildFrontmatter(
 	return lines.join('\n');
 }
 
+/**
+ * A callout naming the stretches that failed to transcribe, so a gap in the
+ * transcript is never mistaken for silence in the meeting.
+ */
+function buildGapCallout(result: TranscriptionResult): string[] {
+	const gaps = result.gaps ?? [];
+	if (gaps.length === 0) return [];
+
+	const lines = ['> [!warning] Transcription incomplete'];
+	for (const gap of gaps) {
+		lines.push(
+			`> - No transcript for ${formatTimestamp(gap.start)}–${formatTimestamp(gap.end)}: ${gap.reason}`,
+		);
+	}
+	lines.push('');
+	return lines;
+}
+
 export interface MeetingNoteInput {
 	result: TranscriptionResult;
 	date: Date;
@@ -99,6 +118,7 @@ export async function createMeetingNote(
 
 	const lines = [buildFrontmatter(result, date, durationSeconds), ''];
 	if (audioPath) lines.push(`**Recording:** ![[${audioPath}]]`, '');
+	lines.push(...buildGapCallout(result));
 	lines.push(
 		`## ${TRANSCRIPT_HEADING}`,
 		'',

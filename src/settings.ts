@@ -39,6 +39,8 @@ export interface MeetingSummarySettings {
 	whisperApiKey: string;
 	whisperBaseUrl: string;
 	whisperModel: string;
+	/** Cut the recording into pieces this long before transcribing. 0 is off. */
+	chunkMinutes: number;
 	/** Ask Claude to attribute speakers, since no provider here diarises. */
 	llmDiarisation: boolean;
 	/** Comma-separated real names, in order of first appearance. */
@@ -64,6 +66,7 @@ export const DEFAULT_SETTINGS: MeetingSummarySettings = {
 	whisperApiKey: '',
 	whisperBaseUrl: 'https://api.openai.com/v1',
 	whisperModel: 'whisper-1',
+	chunkMinutes: 10,
 	llmDiarisation: true,
 	speakerNames: '',
 
@@ -180,6 +183,25 @@ export class MeetingSummarySettingTab extends PluginSettingTab {
 						}),
 				);
 		}
+
+		new Setting(containerEl)
+			.setName('Split long recordings')
+			.setDesc(
+				'Minutes of audio per request. Long meetings are sent in pieces and stitched back together, which avoids one oversized upload and lets a failed piece be retried on its own. Set to 0 to send the whole recording at once.',
+			)
+			.addText((text) =>
+				text
+					.setPlaceholder('10')
+					.setValue(String(this.plugin.settings.chunkMinutes))
+					.onChange(async (value) => {
+						const minutes = Number.parseInt(value, 10);
+						this.plugin.settings.chunkMinutes =
+							Number.isFinite(minutes) && minutes >= 0
+								? minutes
+								: DEFAULT_SETTINGS.chunkMinutes;
+						await this.plugin.saveSettings();
+					}),
+			);
 
 		new Setting(containerEl)
 			.setName('Attribute speakers with Claude')

@@ -11,6 +11,14 @@ export interface TranscriptSegment {
 	text: string;
 }
 
+/** A stretch of the recording that produced no transcript. */
+export interface TranscriptGap {
+	/** Offsets from the start of the recording, in seconds. */
+	start: number;
+	end: number;
+	reason: string;
+}
+
 export interface TranscriptionResult {
 	segments: TranscriptSegment[];
 	/** Identifier of the service that produced the transcript. */
@@ -22,4 +30,6 @@ export interface TranscriptionResult {
 	durationSeconds?: number;
 	/** True when speaker labels come from the provider rather than a guess. */
 	diarised: boolean;
+	/** Parts that failed to transcribe, when the audio was sent in pieces. */
+	gaps?: TranscriptGap[];
 }

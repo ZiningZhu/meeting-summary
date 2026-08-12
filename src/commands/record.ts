@@ -58,7 +58,9 @@ export class RecordingController {
 			return;
 		}
 		try {
-			await this.recorder.start();
+			await this.recorder.start({
+				segmentSeconds: Math.max(0, this.plugin.settings.chunkMinutes) * 60,
+			});
 		} catch (error) {
 			new Notice(errorMessage(error), 8000);
 			return;
@@ -114,12 +116,28 @@ export class RecordingController {
 				recovery = null; // Already on disk.
 			}
 
+			const baseName = `Meeting ${timestampForFilename(date)}`;
 			const result = await transcribe(this.plugin.settings, {
-				audio: recording.data,
-				mimeType: recording.mimeType,
-				fileName: `Meeting ${timestampForFilename(date)}.${recording.extension}`,
+				parts: recording.parts.map((part, index) => ({
+					data: part.data,
+					mimeType: part.mimeType,
+					fileName:
+						recording.parts.length > 1
+							? `${baseName} part ${index + 1}.${recording.extension}`
+							: `${baseName}.${recording.extension}`,
+					offsetSeconds: part.offsetSeconds,
+					durationSeconds: part.durationSeconds,
+				})),
 				onProgress: (message) => progress.setMessage(message),
 			});
+
+			if (result.gaps && result.gaps.length > 0) {
+				const count = result.gaps.length;
+				new Notice(
+					`${count} ${count === 1 ? 'part' : 'parts'} of the recording could not be transcribed. The note marks the gaps; the audio is intact.`,
+					12000,
+				);
+			}
 
 			progress.setMessage('Writing note…');
 			const note = await createMeetingNote(

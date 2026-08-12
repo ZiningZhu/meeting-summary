@@ -32,6 +32,8 @@ Claude has no speech-to-text endpoint, so transcription uses a dedicated provide
 
 Neither provider returns speaker labels. With **Attribute speakers with Claude** enabled, Claude infers turns from the transcript after transcription. That is a best-effort guess: it reads the wording and flow, not the voices, so it is noticeably weaker than acoustic diarisation and will make mistakes on fast exchanges. Turn it off and the whole transcript is attributed to `Speaker 1`.
 
+**Split long recordings** controls how much audio goes in each request, in minutes (10 by default, 0 to send the whole meeting at once). A two-hour meeting is captured as a dozen pieces, transcribed one at a time, and stitched back into a single transcript with the timestamps corrected. Each piece is retried once on failure; anything that still fails becomes a marked gap in the note rather than losing the meeting. The recording itself is still saved as one audio file.
+
 Set **Speaker names** to a comma-separated list to replace `Speaker 1`, `Speaker 2`, … with real names, in order of first speaking turn.
 
 ### Summarisation
@@ -52,7 +54,8 @@ Nothing is sent anywhere until you start a recording or run a summary. **Do not 
 
 - Recording uses the `MediaRecorder` API and captures **microphone input only**. It does not capture system audio, so remote participants are only recorded if they come through your room's speakers. For calls, route the meeting audio into a virtual input device (BlackHole, Loopback, VB-Cable) and select it as your system microphone.
 - Mobile support depends on the platform granting microphone access to Obsidian's webview; the plugin reports a clear error where it is unavailable.
-- Very long meetings are transcribed in one request. Provider file-size and duration limits apply.
+- Transcription is not real-time. Nothing is sent until you stop recording, and the pieces are transcribed sequentially, so a long meeting takes a few minutes to come back. DeepInfra exposes no streaming ASR endpoint, and Qwen3-ASR's own streaming mode returns no timestamps.
+- Splitting cuts on a clock, not on silence, so a word can be clipped at a boundary roughly every N minutes. Raise the split interval to make that rarer.
 
 ## Development
 
@@ -72,7 +75,7 @@ src/
   main.ts                  plugin lifecycle
   settings.ts              settings interface, defaults, settings tab
   types.ts                 shared transcript shapes
-  audio/recorder.ts        MediaRecorder wrapper
+  audio/recorder.ts        MediaRecorder wrapper, segmented capture
   transcription/           provider dispatch, DeepInfra, Whisper-compatible
   llm/                     Anthropic client, summarisation, speaker attribution
   notes/                   note creation and markdown section editing
