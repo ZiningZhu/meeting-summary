@@ -23,6 +23,19 @@ Record a meeting from Obsidian, transcribe it with speaker diarisation into a ti
 
 Open **Settings → Community plugins → Meeting Summary**.
 
+### Recording
+
+**Microphone** picks the input for your own voice. Device names only appear once macOS has granted microphone access, so the list is unnamed until after your first recording.
+
+**Meeting audio** is optional and captures the other end of a call, mixed with your microphone into a single recording. It needs a loopback input device, because macOS gives applications no way to tap system audio directly — Electron can only do it with an entitlement Obsidian does not declare. On macOS:
+
+1. Install [BlackHole 2ch](https://existential.audio/blackhole/) (`brew install --cask blackhole-2ch`) and reboot.
+2. In **Audio MIDI Setup**, create a **Multi-Output Device** containing your headphones and BlackHole 2ch. List the headphones first so the real hardware drives the clock.
+3. Set that Multi-Output Device as the output in Zoom or Teams. You keep hearing the call, and a copy is routed into BlackHole.
+4. Select **BlackHole 2ch** as **Meeting audio** here.
+
+Leave it off for in-person meetings, where there is nothing to capture and a silent second source only makes the recording quieter. Chromium's echo cancellation, noise suppression, and auto gain are disabled on the loopback input — it is a clean digital copy, and that processing would only damage it.
+
 ### Transcription
 
 Claude has no speech-to-text endpoint, so transcription uses a dedicated provider:
@@ -52,7 +65,8 @@ Nothing is sent anywhere until you start a recording or run a summary. **Do not 
 
 ## Limitations
 
-- Recording uses the `MediaRecorder` API and captures **microphone input only**. It does not capture system audio, so remote participants are only recorded if they come through your room's speakers. For calls, route the meeting audio into a virtual input device (BlackHole, Loopback, VB-Cable) and select it as your system microphone.
+- Capturing the far end of a call needs a loopback device (see **Recording** above). There is no way around this from inside a plugin: system audio capture requires an `NSAudioCaptureUsageDescription` entitlement in the signed app bundle, and `desktopCapturer` is main-process-only.
+- The microphone and the loopback are separate hardware clocks, so over a very long meeting they can drift apart. If you notice the two sides sliding out of sync, build an **Aggregate Device** in Audio MIDI Setup with drift correction instead of using two devices.
 - Mobile support depends on the platform granting microphone access to Obsidian's webview; the plugin reports a clear error where it is unavailable.
 - Transcription is not real-time. Nothing is sent until you stop recording, and the pieces are transcribed sequentially, so a long meeting takes a few minutes to come back. DeepInfra exposes no streaming ASR endpoint, and Qwen3-ASR's own streaming mode returns no timestamps.
 - Splitting cuts on a clock, not on silence, so a word can be clipped at a boundary roughly every N minutes. Raise the split interval to make that rarer.

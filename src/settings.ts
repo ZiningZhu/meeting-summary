@@ -25,6 +25,15 @@ Bullets for anything raised but unresolved.
 Ground every statement in the transcript — do not infer commitments, dates, or outcomes that were not spoken. If the transcript is too short or garbled to summarise, say so plainly instead of guessing.`;
 
 export interface MeetingSummarySettings {
+	// Capture.
+	/** Input device for your own voice. Empty means the system default. */
+	micDeviceId: string;
+	/**
+	 * Loopback device carrying the other end of the call, e.g. BlackHole fed by
+	 * a Multi-Output Device. Empty records the microphone alone.
+	 */
+	systemAudioDeviceId: string;
+
 	// Anthropic (summarisation, and speaker attribution when the transcription
 	// provider does not diarise).
 	anthropicApiKey: string;
@@ -55,6 +64,9 @@ export interface MeetingSummarySettings {
 }
 
 export const DEFAULT_SETTINGS: MeetingSummarySettings = {
+	micDeviceId: '',
+	systemAudioDeviceId: '',
+
 	anthropicApiKey: '',
 	model: 'claude-opus-5',
 	effort: 'high',
@@ -85,9 +97,80 @@ export class MeetingSummarySettingTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
+	/**
+	 * A dropdown of audio input devices. Device labels are only exposed once
+	 * microphone permission has been granted, so before the first recording the
+	 * list is unnamed and the ids stand in.
+	 */
+	private addDeviceDropdown(
+		setting: Setting,
+		value: string,
+		emptyLabel: string,
+		apply: (deviceId: string) => Promise<void>,
+	): void {
+		setting.addDropdown((dropdown) => {
+			dropdown.addOption('', emptyLabel);
+			dropdown.setValue(value);
+			dropdown.onChange(async (selected) => {
+				await apply(selected);
+			});
+
+			void navigator.mediaDevices
+				?.enumerateDevices()
+				.then((devices) => {
+					for (const device of devices) {
+						// "default" and "communications" are aliases for whatever the
+						// system picks, which the empty option already covers.
+						if (device.kind !== 'audioinput') continue;
+						if (!device.deviceId) continue;
+						if (device.deviceId === 'default') continue;
+						if (device.deviceId === 'communications') continue;
+						dropdown.addOption(
+							device.deviceId,
+							device.label || `Unnamed input (${device.deviceId.slice(0, 8)}…)`,
+						);
+					}
+					// A saved device that has since been unplugged is not in the list,
+					// so this quietly falls back to the empty option.
+					dropdown.setValue(value);
+				})
+				.catch((error) => {
+					console.error('Meeting summary: could not list audio devices', error);
+				});
+		});
+	}
+
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
+
+		new Setting(containerEl).setName('Recording').setHeading();
+
+		this.addDeviceDropdown(
+			new Setting(containerEl)
+				.setName('Microphone')
+				.setDesc('Your own voice. Device names appear after the first recording.'),
+			this.plugin.settings.micDeviceId,
+			'System default',
+			async (deviceId) => {
+				this.plugin.settings.micDeviceId = deviceId;
+				await this.plugin.saveSettings();
+			},
+		);
+
+		this.addDeviceDropdown(
+			new Setting(containerEl)
+				.setName('Meeting audio')
+				.setDesc(
+					'A loopback input carrying the other end of the call, such as BlackHole fed by a Multi-Output Device. Mixed with the microphone into one recording. Leave off for in-person meetings.',
+				),
+			this.plugin.settings.systemAudioDeviceId,
+			'Off — microphone only',
+			async (deviceId) => {
+				this.plugin.settings.systemAudioDeviceId = deviceId;
+				await this.plugin.saveSettings();
+			},
+		);
 
 		new Setting(containerEl).setName('Transcription').setHeading();
 

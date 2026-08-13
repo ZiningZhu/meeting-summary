@@ -60,13 +60,23 @@ export class RecordingController {
 		try {
 			await this.recorder.start({
 				segmentSeconds: Math.max(0, this.plugin.settings.chunkMinutes) * 60,
+				micDeviceId: this.plugin.settings.micDeviceId,
+				systemDeviceId: this.plugin.settings.systemAudioDeviceId,
 			});
 		} catch (error) {
 			new Notice(errorMessage(error), 8000);
 			return;
 		}
 
-		new Notice('Recording started.');
+		for (const warning of this.recorder.warnings) {
+			new Notice(warning, 10000);
+		}
+		new Notice(
+			this.plugin.settings.systemAudioDeviceId &&
+			this.recorder.warnings.length === 0
+				? 'Recording started — microphone and meeting audio.'
+				: 'Recording started.',
+		);
 		this.tickInterval = window.setInterval(() => this.render(), 1000);
 		this.plugin.registerInterval(this.tickInterval);
 		this.render();

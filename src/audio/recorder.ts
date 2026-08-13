@@ -26,7 +26,20 @@ export interface RecordingOptions {
 	 * provider in pieces rather than as one oversized request. 0 disables it.
 	 */
 	segmentSeconds?: number;
+	/** Input device for your own voice. Empty means the system default. */
+	micDeviceId?: string;
+	/** Loopback device carrying the call. Empty records the microphone alone. */
+	systemDeviceId?: string;
 }
+
+/**
+ * Devices disagree about sample rate — BlackHole adopts whatever rate its
+ * client asks for — so the mixing graph pins one and lets WebAudio resample.
+ */
+const MIX_SAMPLE_RATE = 48000;
+
+/** Headroom, so two sources at full scale do not sum past what opus can hold. */
+const MIX_GAIN = 0.85;
 
 /** Candidate containers, best first. Opus-in-WebM is the widest-supported. */
 const PREFERRED_MIME_TYPES = [
@@ -58,6 +71,12 @@ function extensionFor(mimeType: string): string {
 	return 'webm';
 }
 
+function microphoneError(error: unknown): Error {
+	return new Error(
+		`Could not access the microphone: ${error instanceof Error ? error.message : String(error)}`,
+	);
+}
+
 /**
  * Captures the microphone.
  *
@@ -83,12 +102,69 @@ export class AudioRecorder {
 	/** Set when a rotation fails, so the parts collected so far are not trusted. */
 	private segmentationFailed = false;
 
+	/** The raw device streams behind `stream`, which may be a mix of them. */
+	private sourceStreams: MediaStream[] = [];
+	private mixContext: AudioContext | null = null;
+	/** Non-fatal problems from the last `start()`, for the caller to surface. */
+	private startWarnings: string[] = [];
+
 	get isRecording(): boolean {
 		return this.recorder !== null && this.recorder.state !== 'inactive';
 	}
 
 	get elapsedSeconds(): number {
 		return this.startedAt === 0 ? 0 : (Date.now() - this.startedAt) / 1000;
+	}
+
+	/** Non-fatal problems from the last `start()`, for the caller to surface. */
+	get warnings(): string[] {
+		return this.startWarnings;
+	}
+
+	/**
+	 * Opens one input device. Loopback captures skip Chromium's voice
+	 * processing: there is no echo or room noise in a digital copy of the call,
+	 * and the gate would only chew holes in it.
+	 */
+	private openDevice(
+		deviceId: string | undefined,
+		loopback: boolean,
+	): Promise<MediaStream> {
+		const constraints: MediaTrackConstraints = {};
+		if (deviceId) constraints.deviceId = { exact: deviceId };
+		if (loopback) {
+			constraints.echoCancellation = false;
+			constraints.noiseSuppression = false;
+			constraints.autoGainControl = false;
+		}
+		return navigator.mediaDevices.getUserMedia({
+			audio: Object.keys(constraints).length > 0 ? constraints : true,
+		});
+	}
+
+	/** Sums the streams into one mono track for the recorders to consume. */
+	private mix(streams: MediaStream[]): MediaStream {
+		const context = new AudioContext({ sampleRate: MIX_SAMPLE_RATE });
+		this.mixContext = context;
+
+		// The output stream takes its channel count at construction, so mono has
+		// to be asked for here rather than set afterwards. Speech recognition
+		// gains nothing from two channels, and mono halves what is uploaded.
+		const destination = new MediaStreamAudioDestinationNode(context, {
+			channelCount: 1,
+			channelCountMode: 'explicit',
+		});
+
+		for (const stream of streams) {
+			const source = context.createMediaStreamSource(stream);
+			const gain = context.createGain();
+			gain.gain.value = MIX_GAIN;
+			source.connect(gain).connect(destination);
+		}
+
+		// Contexts can come up suspended when created outside a user gesture.
+		void context.resume().catch(() => undefined);
+		return destination.stream;
 	}
 
 	/** Requests microphone access and begins capturing. */
@@ -98,18 +174,55 @@ export class AudioRecorder {
 			throw new Error('Audio recording is not supported on this device.');
 		}
 
-		let stream: MediaStream;
+		this.startWarnings = [];
+		this.sourceStreams = [];
+
+		let mic: MediaStream;
 		try {
-			stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+			mic = await this.openDevice(options.micDeviceId, false);
 		} catch (error) {
-			throw new Error(
-				`Could not access the microphone: ${error instanceof Error ? error.message : String(error)}`,
-			);
+			// Retry on the default device: a saved id goes stale as soon as the
+			// device is unplugged, and that should not block the meeting.
+			if (!options.micDeviceId) throw microphoneError(error);
+			console.error('Meeting summary: configured microphone unavailable', error);
+			try {
+				mic = await this.openDevice(undefined, false);
+				this.startWarnings.push(
+					'The selected microphone was unavailable. Using the system default.',
+				);
+			} catch (fallbackError) {
+				throw microphoneError(fallbackError);
+			}
+		}
+		this.sourceStreams.push(mic);
+
+		let stream = mic;
+		if (options.systemDeviceId) {
+			try {
+				const system = await this.openDevice(options.systemDeviceId, true);
+				this.sourceStreams.push(system);
+				stream = this.mix([mic, system]);
+			} catch (error) {
+				// Losing the far end is bad, losing the meeting is worse.
+				console.error('Meeting summary: meeting audio unavailable', error);
+				this.startWarnings.push(
+					'Meeting audio could not be captured. Recording the microphone only.',
+				);
+			}
 		}
 
 		const mimeType = pickMimeType();
 		this.recorderOptions = mimeType ? { mimeType } : undefined;
-		const recorder = new MediaRecorder(stream, this.recorderOptions);
+		let recorder: MediaRecorder;
+		try {
+			recorder = new MediaRecorder(stream, this.recorderOptions);
+		} catch (error) {
+			// The devices are already open; without this they stay live, holding
+			// the microphone indicator on with nothing recording.
+			this.stream = stream;
+			this.releaseStream();
+			throw microphoneError(error);
+		}
 
 		this.chunks = [];
 		recorder.addEventListener('dataavailable', (event) => {
@@ -299,7 +412,15 @@ export class AudioRecorder {
 	}
 
 	private releaseStream(): void {
+		// `stream` may be the mix, whose tracks are not the device tracks: the
+		// microphone stays live until every source is stopped too.
 		this.stream?.getTracks().forEach((track) => track.stop());
+		for (const source of this.sourceStreams) {
+			source.getTracks().forEach((track) => track.stop());
+		}
+		this.sourceStreams = [];
+		void this.mixContext?.close().catch(() => undefined);
+		this.mixContext = null;
 		this.stream = null;
 		this.recorder = null;
 		this.chunks = [];
