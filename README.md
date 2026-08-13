@@ -21,7 +21,7 @@ Record a meeting from Obsidian, transcribe it with speaker diarisation into a ti
 
 ## Installing
 
-This repository holds the source. Obsidian runs `main.js`, which is not checked in, so cloning is not enough on its own: the plugin shows up in the plugin list but the toggle will not turn on. Build it once after cloning.
+This repository holds the source. Obsidian runs `main.js`, which is gitignored and built locally, so cloning on its own leaves the plugin listed in Obsidian but unable to activate. Clone it into your vault and build it:
 
 ```bash
 git clone git@github.com:ZiningZhu/meeting-summary.git <Vault>/.obsidian/plugins/meeting-summary
@@ -32,12 +32,11 @@ npm run build
 
 The folder name has to be `meeting-summary`, matching the `id` in `manifest.json`.
 
-Then reload Obsidian (`Cmd+R`, or the refresh icon next to **Installed plugins** under **Settings → Community plugins**) and enable Meeting Summary. Obsidian reads the plugin list at startup, so a freshly built `main.js` is invisible to it until you reload.
+Then reload Obsidian (`Cmd+R`) and enable Meeting Summary under **Settings → Community plugins**. The plugin list is read at startup, so a freshly built `main.js` stays invisible until you reload. Re-run `npm run build` after every `git pull`.
 
-Two things that trip people up:
+If `npm install` warns about blocked install scripts, or the build fails on a missing esbuild binary, run `npm install-scripts approve esbuild` and build again. npm 12 blocks package install scripts by default, and esbuild needs its postinstall step to fetch its native binary.
 
-- npm 12 blocks package install scripts by default, and esbuild needs its postinstall step to fetch its native binary. If `npm install` warns about blocked install scripts, or the build fails with a missing esbuild binary, run `npm install-scripts approve esbuild` and build again.
-- `main.js` is gitignored, so re-run `npm run build` after every `git pull`.
+To work on the plugin itself, `npm run dev` rebuilds on save and `npm run lint` checks style.
 
 ## Setup
 
@@ -91,18 +90,7 @@ Nothing is sent anywhere until you start a recording or run a summary. **Do not 
 - Transcription is not real-time. Nothing is sent until you stop recording, and the pieces are transcribed sequentially, so a long meeting takes a few minutes to come back. DeepInfra exposes no streaming ASR endpoint, and Qwen3-ASR's own streaming mode returns no timestamps.
 - Splitting cuts on a clock, not on silence, so a word can be clipped at a boundary roughly every N minutes. Raise the split interval to make that rarer.
 
-## Development
-
-```bash
-npm install
-npm run dev     # watch build
-npm run build   # type-check and production build
-npm run lint
-```
-
-To test in a vault, copy `main.js`, `manifest.json`, and `styles.css` into `<Vault>/.obsidian/plugins/meeting-summary/`, then enable the plugin under **Settings → Community plugins**. For live reloading, develop directly in that folder — the plugin id (`meeting-summary`) should match the folder name.
-
-### Layout
+## Layout
 
 ```
 src/
