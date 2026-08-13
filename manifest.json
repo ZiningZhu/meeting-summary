@@ -4,7 +4,7 @@
 	"version": "1.0.0",
 	"minAppVersion": "1.4.0",
 	"description": "Record a meeting, transcribe it with speaker diarisation into a timestamped note, and summarise it with Claude.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
+	"author": "Zining Zhu",
+	"authorUrl": "https://ecailab.org",
 	"isDesktopOnly": false
 }
