@@ -1,7 +1,8 @@
 import { App, PluginSettingTab, Setting } from 'obsidian';
 import type MeetingSummaryPlugin from './main';
 
-export type TranscriptionProviderId = 'deepgram' | 'whisper';
+export const TRANSCRIPTION_PROVIDER_IDS = ['deepinfra', 'whisper'] as const;
+export type TranscriptionProviderId = (typeof TRANSCRIPTION_PROVIDER_IDS)[number];
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export const DEFAULT_SUMMARY_PROMPT = `Summarise the meeting transcript below in Markdown. Use only these sections, and omit any section that has no content:
@@ -24,6 +25,15 @@ Bullets for anything raised but unresolved.
 Ground every statement in the transcript — do not infer commitments, dates, or outcomes that were not spoken. If the transcript is too short or garbled to summarise, say so plainly instead of guessing.`;
 
 export interface MeetingSummarySettings {
+	// Capture.
+	/** Input device for your own voice. Empty means the system default. */
+	micDeviceId: string;
+	/**
+	 * Loopback device carrying the other end of the call, e.g. BlackHole fed by
+	 * a Multi-Output Device. Empty records the microphone alone.
+	 */
+	systemAudioDeviceId: string;
+
 	// Anthropic (summarisation, and speaker attribution when the transcription
 	// provider does not diarise).
 	anthropicApiKey: string;
@@ -33,12 +43,14 @@ export interface MeetingSummarySettings {
 
 	// Transcription.
 	transcriptionProvider: TranscriptionProviderId;
-	deepgramApiKey: string;
-	deepgramModel: string;
+	deepinfraApiKey: string;
+	deepinfraModel: string;
 	whisperApiKey: string;
 	whisperBaseUrl: string;
 	whisperModel: string;
-	/** Ask Claude to attribute speakers when the provider returns none. */
+	/** Cut the recording into pieces this long before transcribing. 0 is off. */
+	chunkMinutes: number;
+	/** Ask Claude to attribute speakers, since no provider here diarises. */
 	llmDiarisation: boolean;
 	/** Comma-separated real names, in order of first appearance. */
 	speakerNames: string;
@@ -52,17 +64,21 @@ export interface MeetingSummarySettings {
 }
 
 export const DEFAULT_SETTINGS: MeetingSummarySettings = {
+	micDeviceId: '',
+	systemAudioDeviceId: '',
+
 	anthropicApiKey: '',
 	model: 'claude-opus-5',
 	effort: 'high',
 	summaryPrompt: DEFAULT_SUMMARY_PROMPT,
 
-	transcriptionProvider: 'deepgram',
-	deepgramApiKey: '',
-	deepgramModel: 'nova-3',
+	transcriptionProvider: 'deepinfra',
+	deepinfraApiKey: '',
+	deepinfraModel: 'Qwen/Qwen3-ASR-1.7B',
 	whisperApiKey: '',
 	whisperBaseUrl: 'https://api.openai.com/v1',
 	whisperModel: 'whisper-1',
+	chunkMinutes: 10,
 	llmDiarisation: true,
 	speakerNames: '',
 
@@ -81,20 +97,91 @@ export class MeetingSummarySettingTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
+	/**
+	 * A dropdown of audio input devices. Device labels are only exposed once
+	 * microphone permission has been granted, so before the first recording the
+	 * list is unnamed and the ids stand in.
+	 */
+	private addDeviceDropdown(
+		setting: Setting,
+		value: string,
+		emptyLabel: string,
+		apply: (deviceId: string) => Promise<void>,
+	): void {
+		setting.addDropdown((dropdown) => {
+			dropdown.addOption('', emptyLabel);
+			dropdown.setValue(value);
+			dropdown.onChange(async (selected) => {
+				await apply(selected);
+			});
+
+			void navigator.mediaDevices
+				?.enumerateDevices()
+				.then((devices) => {
+					for (const device of devices) {
+						// "default" and "communications" are aliases for whatever the
+						// system picks, which the empty option already covers.
+						if (device.kind !== 'audioinput') continue;
+						if (!device.deviceId) continue;
+						if (device.deviceId === 'default') continue;
+						if (device.deviceId === 'communications') continue;
+						dropdown.addOption(
+							device.deviceId,
+							device.label || `Unnamed input (${device.deviceId.slice(0, 8)}…)`,
+						);
+					}
+					// A saved device that has since been unplugged is not in the list,
+					// so this quietly falls back to the empty option.
+					dropdown.setValue(value);
+				})
+				.catch((error) => {
+					console.error('Meeting summary: could not list audio devices', error);
+				});
+		});
+	}
+
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
+
+		new Setting(containerEl).setName('Recording').setHeading();
+
+		this.addDeviceDropdown(
+			new Setting(containerEl)
+				.setName('Microphone')
+				.setDesc('Your own voice. Device names appear after the first recording.'),
+			this.plugin.settings.micDeviceId,
+			'System default',
+			async (deviceId) => {
+				this.plugin.settings.micDeviceId = deviceId;
+				await this.plugin.saveSettings();
+			},
+		);
+
+		this.addDeviceDropdown(
+			new Setting(containerEl)
+				.setName('Meeting audio')
+				.setDesc(
+					'A loopback input carrying the other end of the call, such as BlackHole fed by a Multi-Output Device. Mixed with the microphone into one recording. Leave off for in-person meetings.',
+				),
+			this.plugin.settings.systemAudioDeviceId,
+			'Off — microphone only',
+			async (deviceId) => {
+				this.plugin.settings.systemAudioDeviceId = deviceId;
+				await this.plugin.saveSettings();
+			},
+		);
 
 		new Setting(containerEl).setName('Transcription').setHeading();
 
 		new Setting(containerEl)
 			.setName('Provider')
 			.setDesc(
-				'Deepgram labels speakers itself. A Whisper-compatible endpoint does not, so speakers are attributed by Claude afterwards.',
+				'Neither provider labels speakers, so speaker turns are attributed by Claude afterwards.',
 			)
 			.addDropdown((dropdown) =>
 				dropdown
-					.addOption('deepgram', 'Deepgram')
+					.addOption('deepinfra', 'DeepInfra')
 					.addOption('whisper', 'Whisper-compatible')
 					.setValue(this.plugin.settings.transcriptionProvider)
 					.onChange(async (value) => {
@@ -105,29 +192,33 @@ export class MeetingSummarySettingTab extends PluginSettingTab {
 					}),
 			);
 
-		if (this.plugin.settings.transcriptionProvider === 'deepgram') {
+		if (this.plugin.settings.transcriptionProvider === 'deepinfra') {
 			new Setting(containerEl)
-				.setName('Deepgram API key')
-				.setDesc('Sent to api.deepgram.com with each recording.')
+				.setName('DeepInfra API key')
+				.setDesc('Sent to api.deepinfra.com with each recording.')
 				.addText((text) =>
 					text
-						.setPlaceholder('Enter your Deepgram API key')
-						.setValue(this.plugin.settings.deepgramApiKey)
+						.setPlaceholder('Enter your DeepInfra API key')
+						.setValue(this.plugin.settings.deepinfraApiKey)
 						.onChange(async (value) => {
-							this.plugin.settings.deepgramApiKey = value.trim();
+							this.plugin.settings.deepinfraApiKey = value.trim();
 							await this.plugin.saveSettings();
 						}),
 				);
 
 			new Setting(containerEl)
-				.setName('Deepgram model')
+				.setName('DeepInfra model')
+				.setDesc(
+					'Any speech-to-text model on DeepInfra, given as owner/name. Must return Whisper-style segments.',
+				)
 				.addText((text) =>
 					text
-						.setPlaceholder('nova-3')
-						.setValue(this.plugin.settings.deepgramModel)
+						.setPlaceholder('Qwen/Qwen3-ASR-1.7B')
+						.setValue(this.plugin.settings.deepinfraModel)
 						.onChange(async (value) => {
-							this.plugin.settings.deepgramModel =
-								value.trim() || DEFAULT_SETTINGS.deepgramModel;
+							this.plugin.settings.deepinfraModel =
+								value.trim().replace(/^\/+|\/+$/g, '') ||
+								DEFAULT_SETTINGS.deepinfraModel;
 							await this.plugin.saveSettings();
 						}),
 				);
@@ -174,21 +265,40 @@ export class MeetingSummarySettingTab extends PluginSettingTab {
 							await this.plugin.saveSettings();
 						}),
 				);
-
-			new Setting(containerEl)
-				.setName('Attribute speakers with Claude')
-				.setDesc(
-					'Infers speaker turns from the transcript. Less reliable than acoustic diarisation, and sends the transcript to Anthropic.',
-				)
-				.addToggle((toggle) =>
-					toggle
-						.setValue(this.plugin.settings.llmDiarisation)
-						.onChange(async (value) => {
-							this.plugin.settings.llmDiarisation = value;
-							await this.plugin.saveSettings();
-						}),
-				);
 		}
+
+		new Setting(containerEl)
+			.setName('Split long recordings')
+			.setDesc(
+				'Minutes of audio per request. Long meetings are sent in pieces and stitched back together, which avoids one oversized upload and lets a failed piece be retried on its own. Set to 0 to send the whole recording at once.',
+			)
+			.addText((text) =>
+				text
+					.setPlaceholder('10')
+					.setValue(String(this.plugin.settings.chunkMinutes))
+					.onChange(async (value) => {
+						const minutes = Number.parseInt(value, 10);
+						this.plugin.settings.chunkMinutes =
+							Number.isFinite(minutes) && minutes >= 0
+								? minutes
+								: DEFAULT_SETTINGS.chunkMinutes;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Attribute speakers with Claude')
+			.setDesc(
+				'Infers speaker turns from the transcript. Less reliable than acoustic diarisation, and sends the transcript to Anthropic.',
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.llmDiarisation)
+					.onChange(async (value) => {
+						this.plugin.settings.llmDiarisation = value;
+						await this.plugin.saveSettings();
+					}),
+			);
 
 		new Setting(containerEl)
 			.setName('Speaker names')

@@ -58,13 +58,25 @@ export class RecordingController {
 			return;
 		}
 		try {
-			await this.recorder.start();
+			await this.recorder.start({
+				segmentSeconds: Math.max(0, this.plugin.settings.chunkMinutes) * 60,
+				micDeviceId: this.plugin.settings.micDeviceId,
+				systemDeviceId: this.plugin.settings.systemAudioDeviceId,
+			});
 		} catch (error) {
 			new Notice(errorMessage(error), 8000);
 			return;
 		}
 
-		new Notice('Recording started.');
+		for (const warning of this.recorder.warnings) {
+			new Notice(warning, 10000);
+		}
+		new Notice(
+			this.plugin.settings.systemAudioDeviceId &&
+			this.recorder.warnings.length === 0
+				? 'Recording started — microphone and meeting audio.'
+				: 'Recording started.',
+		);
 		this.tickInterval = window.setInterval(() => this.render(), 1000);
 		this.plugin.registerInterval(this.tickInterval);
 		this.render();
@@ -114,12 +126,28 @@ export class RecordingController {
 				recovery = null; // Already on disk.
 			}
 
+			const baseName = `Meeting ${timestampForFilename(date)}`;
 			const result = await transcribe(this.plugin.settings, {
-				audio: recording.data,
-				mimeType: recording.mimeType,
-				fileName: `Meeting ${timestampForFilename(date)}.${recording.extension}`,
+				parts: recording.parts.map((part, index) => ({
+					data: part.data,
+					mimeType: part.mimeType,
+					fileName:
+						recording.parts.length > 1
+							? `${baseName} part ${index + 1}.${recording.extension}`
+							: `${baseName}.${recording.extension}`,
+					offsetSeconds: part.offsetSeconds,
+					durationSeconds: part.durationSeconds,
+				})),
 				onProgress: (message) => progress.setMessage(message),
 			});
+
+			if (result.gaps && result.gaps.length > 0) {
+				const count = result.gaps.length;
+				new Notice(
+					`${count} ${count === 1 ? 'part' : 'parts'} of the recording could not be transcribed. The note marks the gaps; the audio is intact.`,
+					12000,
+				);
+			}
 
 			progress.setMessage('Writing note…');
 			const note = await createMeetingNote(
