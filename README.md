@@ -34,8 +34,6 @@ The folder name has to be `meeting-summary`, matching the `id` in `manifest.json
 
 Then reload Obsidian (`Cmd+R`) and enable Meeting Summary under **Settings → Community plugins**. The plugin list is read at startup, so a freshly built `main.js` stays invisible until you reload. Re-run `npm run build` after every `git pull`.
 
-If `npm install` warns about blocked install scripts, or the build fails on a missing esbuild binary, run `npm install-scripts approve esbuild` and build again. npm 12 blocks package install scripts by default, and esbuild needs its postinstall step to fetch its native binary.
-
 To work on the plugin itself, `npm run dev` rebuilds on save and `npm run lint` checks style.
 
 ## Setup
